@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1f2937">
+<meta name="robots" content="noindex">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<title>Идеи</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1b1f24;--mut:#667085;--line:#e3e6ea;--acc:#2563eb;--warn:#b45309;--ok:#15803d}
+@media (prefers-color-scheme:dark){:root{--bg:#12151a;--card:#1b2027;--fg:#e6e9ee;--mut:#98a2b3;--line:#2b323b;--acc:#6ea0ff;--warn:#f5b35c;--ok:#5fd08a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+header h1{font-size:18px;margin:0 auto 0 0}
+input,select,textarea,button{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+button{cursor:pointer}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+textarea{width:100%;min-height:160px;resize:vertical}
+main{padding:12px 14px 80px}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.filters input{flex:1;min-width:140px}
+.panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin-bottom:14px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.panel h2{font-size:14px;margin:0 0 6px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+.panel li{margin:4px 0;cursor:pointer}
+.panel ul{margin:0;padding-left:18px}
+.board{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;align-items:start}
+.col{background:color-mix(in srgb,var(--card) 60%,transparent);border:1px solid var(--line);border-radius:10px;padding:8px}
+.col h3{font-size:14px;margin:2px 4px 8px;display:flex;justify-content:space-between}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:9px 10px;margin-bottom:8px;cursor:pointer}
+.card b{display:block}
+.meta{font-size:12px;color:var(--mut);margin-top:4px;display:flex;gap:6px;flex-wrap:wrap}
+.tag{border:1px solid var(--line);border-radius:999px;padding:0 7px}
+.warn{color:var(--warn)}
+.fab{position:fixed;right:18px;bottom:18px;width:56px;height:56px;border-radius:50%;font-size:30px;line-height:1;padding:0;box-shadow:0 4px 14px #0004}
+dialog{width:min(720px,94vw);max-height:92vh;overflow:auto;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:16px}
+dialog::backdrop{background:#0008}
+dialog h2{margin:0 0 8px}
+label{display:block;font-size:13px;color:var(--mut);margin:10px 0 4px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row>*{flex:1;min-width:120px}
+pre{white-space:pre-wrap;word-wrap:break-word;font:inherit;margin:0;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px}
+.msg{margin:8px 0;font-size:14px}
+.msg.err{color:#dc2626}
+.actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+</style>
+</head>
+<body>
+<header>
+  <h1>💡 Идеи</h1>
+  <button id="refresh" title="Обновить">↻</button>
+  <button id="settings" title="Настройки">⚙</button>
+</header>
+<main id="app"></main>
+<button class="fab primary" id="add" title="Новая идея" hidden>+</button>
+<dialog id="dlg"></dialog>
+
+<script>
+"use strict";
+const STATUSES=["inbox","exploring","planned","in-progress","done","rejected"];
+const RU={"inbox":"Входящие","exploring":"Изучаем","planned":"Запланировано","in-progress":"В работе","done":"Готово","rejected":"Отклонено"};
+const NEXT_ORDER=["in-progress","planned","exploring","inbox"];
+const STALE_DAYS=30;
+const LS="ideasapp.v1";
+let cfg={};try{cfg=JSON.parse(localStorage.getItem(LS)||"{}")}catch(e){}
+let ideas=[];
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const today=()=>new Date().toISOString().slice(0,10);
+const saveCfg=()=>{try{localStorage.setItem(LS,JSON.stringify(cfg))}catch(e){}};
+
+/* ---------- GitHub API ---------- */
+async function gh(path,opt={},raw=false){
+  const r=await fetch("https://api.github.com/repos/"+cfg.repo+path,{...opt,headers:{
+    "Authorization":"Bearer "+cfg.token,
+    "Accept":raw?"application/vnd.github.raw+json":"application/vnd.github+json",
+    ...(opt.method==="PUT"?{"Content-Type":"application/json"}:{}) }});
+  if(!r.ok){const e=new Error(r.status+" "+(r.statusText||""));e.status=r.status;throw e}
+  return raw?r.text():r.json();
+}
+const u8=s=>new TextEncoder().encode(s);
+const b64=s=>{let b="";const a=u8(s);for(let i=0;i<a.length;i+=8192)b+=String.fromCharCode(...a.subarray(i,i+8192));return btoa(b)};
+const unb64=s=>new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\n/g,"")),c=>c.charCodeAt(0)));
+async function getFile(p){const j=await gh("/contents/"+encodeURI(p)+"?ref=main");return{sha:j.sha,text:unb64(j.content)}}
+async function putFile(p,text,msg,sha){
+  return gh("/contents/"+encodeURI(p),{method:"PUT",body:JSON.stringify({message:msg,content:b64(text),branch:"main",...(sha?{sha}:{})})});
+}
+
+/* ---------- парсинг ---------- */
+function parse(slug,text,memText){
+  const m=text.match(/^---\n([\s\S]*?)\n---\n/);const meta={};
+  if(m)for(let line of m[1].split("\n")){
+    if(line.includes("  #"))line=line.split("  #")[0];
+    const i=line.indexOf(":");if(i<0)continue;
+    const k=line.slice(0,i).trim();let v=line.slice(i+1).trim();
+    if(v.startsWith("[")&&v.endsWith("]"))v=v.slice(1,-1).split(",").map(x=>x.trim()).filter(Boolean);
+    meta[k]=v;
+  }
+  meta.slug=slug;meta.title=meta.title||slug;meta.status=STATUSES.includes(meta.status)?meta.status:"inbox";
+  meta.priority=meta.priority||"medium";meta.tags=Array.isArray(meta.tags)?meta.tags:[];
+  meta.body=text.replace(/^---\n[\s\S]*?\n---\n/,"").trim();
+  const dm=text.match(/^## Выжимка[ \t]*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m);meta.digest=dm?dm[1].trim():"";
+  const nm=meta.digest.match(/\*\*Следующий шаг:\*\*\s*(.+)/);meta.next=nm?nm[1].trim():"";
+  const mem=(memText||"").split("\n").filter(l=>/^- \d{4}-\d\d-\d\d/.test(l));
+  meta.mem=mem.length;meta.memLast=mem.length?mem[mem.length-1].slice(2,12):"";
+  const dg=meta.digested||"";meta.stale=!!meta.memLast&&(!dg||meta.memLast>dg);
+  const jm=text.match(/^## Журнал[ \t]*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m);
+  const jd=jm?[...jm[1].matchAll(/^- (\d{4}-\d\d-\d\d)/gm)].map(x=>x[1]):[];
+  meta.last=[meta.created,dg,meta.memLast,...jd].filter(x=>/^\d{4}-\d\d-\d\d$/.test(x||"")).sort().pop()||"";
+  return meta;
+}
+const daysAgo=d=>d?Math.floor((Date.now()-new Date(d+"T00:00:00Z"))/864e5):0;
+
+/* ---------- загрузка ---------- */
+async function load(){
+  $("#app").innerHTML='<p class="msg">Загрузка…</p>';
+  try{
+    const [list,memList]=await Promise.all([gh("/contents/ideas?ref=main"),gh("/contents/memory?ref=main").catch(()=>[])]);
+    const mems=new Set(memList.map(x=>x.name));
+    const files=list.filter(x=>x.type==="file"&&x.name.endsWith(".md"));
+    ideas=await Promise.all(files.map(async f=>{
+      const slug=f.name.slice(0,-3);
+      const [t,mt]=await Promise.all([gh("/contents/ideas/"+encodeURIComponent(f.name)+"?ref=main",{},true),
+        mems.has(f.name)?gh("/contents/memory/"+encodeURIComponent(f.name)+"?ref=main",{},true):""]);
+      return parse(slug,t,mt);
+    }));
+    $("#add").hidden=false;render();
+  }catch(e){
+    $("#app").innerHTML=`<p class="msg err">Ошибка: ${esc(e.message)}. ${e.status===404?"Нет доступа к репо или неверное имя.":e.status===401?"Токен неверный или истёк.":""}</p>`;
+    $("#add").hidden=true;
+  }
+}
+
+/* ---------- отрисовка ---------- */
+const F={q:"",tag:"",eff:""};
+function render(){
+  const all=[...new Set(ideas.flatMap(i=>i.tags))].sort(),effs=[...new Set(ideas.map(i=>i.effort).filter(Boolean))].sort();
+  const vis=ideas.filter(i=>(!F.q||(i.title+" "+i.slug+" "+i.tags.join(" ")+" "+i.body).toLowerCase().includes(F.q.toLowerCase()))
+    &&(!F.tag||i.tags.includes(F.tag))&&(!F.eff||i.effort===F.eff));
+  const next=ideas.filter(i=>i.next&&!["done","rejected"].includes(i.status))
+    .sort((a,b)=>NEXT_ORDER.indexOf(a.status)-NEXT_ORDER.indexOf(b.status));
+  const stale=ideas.filter(i=>!["in-progress","done","rejected"].includes(i.status)&&daysAgo(i.last)>=STALE_DAYS);
+  const due=ideas.filter(i=>i.due&&!["done","rejected"].includes(i.status)).sort((a,b)=>a.due.localeCompare(b.due));
+  const panel=(t,arr,f)=>arr.length?`<div class="panel"><h2>${t}</h2><ul>${arr.map(i=>`<li data-open="${esc(i.slug)}">${f(i)}</li>`).join("")}</ul></div>`:"";
+  $("#app").innerHTML=`
+  <div class="filters">
+    <input id="q" placeholder="Поиск" value="${esc(F.q)}">
+    <select id="ftag"><option value="">Все теги</option>${all.map(t=>`<option ${F.tag===t?"selected":""}>${esc(t)}</option>`).join("")}</select>
+    <select id="feff"><option value="">Любые усилия</option>${effs.map(t=>`<option ${F.eff===t?"selected":""}>${esc(t)}</option>`).join("")}</select>
+  </div>
+  <div class="panels">
+    ${panel("Что дальше",next,i=>`<b>${esc(i.title)}</b><div class="meta">${RU[i.status]}${i.effort?" · ⏱ "+esc(i.effort):""}</div>${esc(i.next)}`)}
+    ${panel("Залежалось",stale,i=>`<b>${esc(i.title)}</b> <span class="meta">${daysAgo(i.last)} дн. без активности</span>`)}
+    ${panel("Сроки",due,i=>`<b>${esc(i.title)}</b> <span class="meta">до ${esc(i.due)}</span>`)}
+  </div>
+  <div class="board">${STATUSES.map(s=>{const c=vis.filter(i=>i.status===s);
+    return `<div class="col"><h3><span>${RU[s]}</span><span class="meta">${c.length}</span></h3>${c.map(i=>`
+      <div class="card" data-open="${esc(i.slug)}"><b>${esc(i.title)}</b>
+      <div class="meta">${i.priority!=="medium"?`<span>${esc(i.priority)}</span>`:""}${i.effort?`<span>⏱ ${esc(i.effort)}</span>`:""}
+      ${i.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}
+      ${i.mem?`<span>память ${i.mem}</span>`:""}${i.stale?`<span class="warn">⚠ выжимка устарела</span>`:""}</div></div>`).join("")}</div>`}).join("")}</div>`;
+  $("#q").oninput=e=>{F.q=e.target.value;const p=e.target.selectionStart;render();const q=$("#q");q.focus();q.setSelectionRange(p,p)};
+  $("#ftag").onchange=e=>{F.tag=e.target.value;render()};
+  $("#feff").onchange=e=>{F.eff=e.target.value;render()};
+}
+$("#app").addEventListener("click",e=>{const el=e.target.closest("[data-open]");if(el)openIdea(el.dataset.open)});
+
+/* ---------- диалоги ---------- */
+const dlg=$("#dlg");
+function show(html){dlg.innerHTML=html;if(!dlg.open)dlg.showModal()}
+const close=()=>dlg.open&&dlg.close();
+dlg.addEventListener("click",e=>{if(e.target===dlg)close()});
+
+function openIdea(slug){
+  const i=ideas.find(x=>x.slug===slug);if(!i)return;
+  show(`<h2>${esc(i.title)}</h2>
+  <div class="meta">${i.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}${i.project?`<span>проект: ${esc(i.project)}</span>`:""}${i.effort?`<span>⏱ ${esc(i.effort)}</span>`:""}<span>память ${i.mem}</span></div>
+  <label>Статус</label>
+  <select id="st">${STATUSES.map(s=>`<option value="${s}" ${s===i.status?"selected":""}>${RU[s]}</option>`).join("")}</select>
+  ${i.digest?`<label>Выжимка${i.stale?' <span class="warn">⚠ устарела</span>':""}</label><pre>${esc(i.digest)}</pre>`:""}
+  <label>Файл идеи</label><pre>${esc(i.body.replace(/^## Выжимка[ \t]*\n[\s\S]*?(?=^## |$(?![\s\S]))/m,"").trim()||"(пусто)")}</pre>
+  <label>Дописать заметку (в журнал)</label><textarea id="note" placeholder="Что нового по этой идее"></textarea>
+  <div class="msg" id="msg"></div>
+  <div class="actions"><button id="x">Закрыть</button><button class="primary" id="ok">Сохранить</button></div>`);
+  $("#x").onclick=close;
+  $("#ok").onclick=async()=>{
+    const ns=$("#st").value,note=$("#note").value.trim();
+    if(ns===i.status&&!note){close();return}
+    $("#ok").disabled=true;$("#msg").textContent="Сохраняю…";
+    try{
+      const p="ideas/"+slug+".md";const f=await getFile(p);let t=f.text;
+      if(ns!==i.status){
+        if(/^status:[^\n]*$/m.test(t))t=t.replace(/^status:[^\n]*$/m,"status: "+ns);
+        else t=t.replace(/^---\n/,"---\nstatus: "+ns+"\n");
+      }
+      if(note){
+        const line="- "+today()+": "+note.replace(/\n+/g," ");
+        const heads=[...t.matchAll(/^## .*$/gm)];const lastH=heads.length?heads[heads.length-1][0]:"";
+        t=t.replace(/\s*$/,"\n")+(lastH.startsWith("## Журнал")?"":"\n## Журнал\n")+line+"\n";
+      }
+      await putFile(p,t,"idea: "+slug+(ns!==i.status?" → "+ns:"")+(note?" + заметка":"")+" (web)",f.sha);
+      close();await load();
+    }catch(e){$("#msg").className="msg err";$("#msg").textContent="Ошибка: "+e.message;$("#ok").disabled=false}
+  };
+}
+
+const TR={а:"a",б:"b",в:"v",г:"g",д:"d",е:"e",ё:"e",ж:"zh",з:"z",и:"i",й:"y",к:"k",л:"l",м:"m",н:"n",о:"o",п:"p",р:"r",с:"s",т:"t",у:"u",ф:"f",х:"h",ц:"c",ч:"ch",ш:"sh",щ:"sch",ъ:"",ы:"y",ь:"",э:"e",ю:"yu",я:"ya"};
+const slugify=s=>s.toLowerCase().replace(/[а-яё]/g,c=>TR[c]??"").replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,40).replace(/-+$/,"");
+
+$("#add").onclick=()=>{
+  show(`<h2>Новая идея</h2>
+  <label>Название</label><input id="t" style="width:100%" placeholder="Коротко, о чём идея">
+  <label>Описание (сколько угодно текста)</label><textarea id="b" style="min-height:220px"></textarea>
+  <div class="row"><div><label>Приоритет</label><select id="p"><option>medium</option><option>high</option><option>low</option></select></div>
+  <div><label>Усилия</label><select id="e"><option value="">не знаю</option><option>вечер</option><option>выходные</option><option>неделя</option></select></div></div>
+  <label>Теги (через запятую)</label><input id="g" style="width:100%">
+  <div class="msg" id="msg"></div>
+  <div class="actions"><button id="x">Отмена</button><button class="primary" id="ok">Сохранить</button></div>`);
+  $("#x").onclick=close;
+  $("#ok").onclick=async()=>{
+    const title=$("#t").value.trim().replace(/\s+/g," ");if(!title){$("#msg").className="msg err";$("#msg").textContent="Нужно название";return}
+    $("#ok").disabled=true;$("#msg").className="msg";$("#msg").textContent="Сохраняю…";
+    try{
+      let base=slugify(title)||"idea-"+today(),slug=base,n=1;
+      for(;;){try{await gh("/contents/ideas/"+slug+".md?ref=main");n++;slug=base+"-"+n}catch(e){if(e.status===404)break;throw e}}
+      const tags=$("#g").value.split(",").map(x=>x.trim()).filter(Boolean).join(", ");
+      const text=`---\ntitle: ${title}\nstatus: inbox\npriority: ${$("#p").value}\ncreated: ${today()}\neffort: ${$("#e").value}\ndue:\ntags: [${tags}]\nproject:\ndepends: []\ndigested:\n---\n\n# ${title}\n\n## Выжимка\n_пока нет: агент напишет по \`memory/${slug}.md\`_\n\n## Суть\n${$("#b").value.trim()}\n\n## Зачем\n## Варианты\n## Следующий шаг\n## Журнал\n- ${today()}: добавлено через веб-интерфейс\n`;
+      await putFile("ideas/"+slug+".md",text,"idea: add "+slug+" (web)");
+      close();await load();
+    }catch(e){$("#msg").className="msg err";$("#msg").textContent="Ошибка: "+e.message;$("#ok").disabled=false}
+  };
+};
+
+function setup(msg){
+  const h=decodeURIComponent(location.hash.slice(1));
+  show(`<h2>Подключение</h2>
+  <p class="msg">Данные лежат в твоём приватном репозитории. Здесь только интерфейс; токен хранится в этом браузере и никуда, кроме api.github.com, не уходит.</p>
+  <label>Репозиторий (владелец/имя)</label><input id="r" style="width:100%" value="${esc(cfg.repo||(/^[\w.-]+\/[\w.-]+$/.test(h)?h:""))}" placeholder="owner/repo" autocapitalize="off" autocorrect="off">
+  <label>Токен (fine-grained, только этот репозиторий, Contents: Read and write)</label>
+  <input id="k" type="password" style="width:100%" value="" placeholder="${cfg.token?"сохранён, введи заново чтобы заменить":"github_pat_…"}" autocomplete="off">
+  <div class="msg ${msg?"err":""}" id="msg">${esc(msg||"")}</div>
+  <div class="actions">${cfg.token?'<button id="out">Выйти</button>':""}<button id="x">Закрыть</button><button class="primary" id="ok">Подключить</button></div>`);
+  $("#x").onclick=close;
+  const out=$("#out");if(out)out.onclick=()=>{cfg={};saveCfg();close();ideas=[];$("#add").hidden=true;$("#app").innerHTML="";setup()};
+  $("#ok").onclick=async()=>{
+    const repo=$("#r").value.trim(),tok=$("#k").value.trim()||cfg.token;
+    if(!/^[\w.-]+\/[\w.-]+$/.test(repo)||!tok){$("#msg").className="msg err";$("#msg").textContent="Нужны репозиторий и токен";return}
+    cfg={repo,token:tok};$("#msg").className="msg";$("#msg").textContent="Проверяю…";
+    try{await gh("");saveCfg();close();load()}catch(e){cfg={};$("#msg").className="msg err";$("#msg").textContent="Не подключилось: "+e.message+(e.status===404?" (репозиторий не найден или токену нет доступа)":"")}
+  };
+}
+$("#settings").onclick=()=>setup();
+$("#refresh").onclick=()=>cfg.token&&load();
+
+if(cfg.token&&cfg.repo)load();else setup();
+</script>
+</body>
+</html>
