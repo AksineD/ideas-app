@@ -36,7 +36,12 @@ main{padding:12px 14px 80px}
 .tag{border:1px solid var(--line);border-radius:999px;padding:0 7px}
 .warn{color:var(--warn)}
 .fab{position:fixed;right:18px;bottom:18px;width:56px;height:56px;border-radius:50%;font-size:30px;line-height:1;padding:0;box-shadow:0 4px 14px #0004}
-dialog{width:min(720px,94vw);max-height:92vh;overflow:auto;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:16px}
+dialog{width:min(720px,94vw);max-height:var(--dh,80vh);margin:auto;padding:0;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+dialog[open]{display:flex;flex-direction:column}
+dialog:focus-visible{outline:none}
+.dbody{overflow:auto;overscroll-behavior:contain;padding:16px;flex:1 1 auto;min-height:0}
+.dfoot{flex:0 0 auto;padding:10px 16px;border-top:1px solid var(--line);background:var(--bg)}
+.dfoot .actions{margin:0}
 dialog::backdrop{background:#0008}
 dialog h2{margin:0 0 8px}
 label{display:block;font-size:13px;color:var(--mut);margin:10px 0 4px}
@@ -45,6 +50,7 @@ label{display:block;font-size:13px;color:var(--mut);margin:10px 0 4px}
 pre{white-space:pre-wrap;word-wrap:break-word;font:inherit;margin:0;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px}
 .msg{margin:8px 0;font-size:14px}
 .msg.err{color:#dc2626}
+.dbg{font-size:12px;color:var(--mut);margin-top:10px}
 .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
 .tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
 .tools .rec{background:#dc2626;border-color:#dc2626;color:#fff}
@@ -257,7 +263,14 @@ async function loadImgs(root){
 
 /* ---------- диалоги ---------- */
 const dlg=$("#dlg");
-function show(html){dlg.innerHTML=html;if(!dlg.open)dlg.showModal()}
+function fit(){const h=(window.visualViewport?visualViewport.height:innerHeight);document.documentElement.style.setProperty("--dh",Math.max(300,Math.round(h-96-(cfg.pad||0)))+"px")}
+window.addEventListener("resize",fit);fit();
+function show(html){
+  fit();dlg.innerHTML='<div class="dbody">'+html+'</div>';
+  const a=dlg.querySelector(".actions");if(a){const f=document.createElement("div");f.className="dfoot";f.appendChild(a);dlg.appendChild(f)}
+  if(!dlg.open)dlg.showModal();
+}
+let lastTa=null;dlg.addEventListener("focusin",e=>{if(e.target.tagName==="TEXTAREA")lastTa=e.target});
 const close=()=>dlg.open&&dlg.close();
 dlg.addEventListener("click",e=>{if(e.target===dlg)close();const a=e.target.closest("[data-idea]");if(a&&ideas.some(x=>x.slug===a.dataset.idea))openIdea(a.dataset.idea)});
 
@@ -278,6 +291,7 @@ async function shrink(file){
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 const mediaHtml=()=>`<div class="tools">${SR?'<button type="button" id="mic">🎤 Голос</button>':""}<button type="button" id="ph">📷 Фото</button><input type="file" id="fi" accept="image/*" multiple hidden><span class="meta" id="pc"></span></div>`;
 function bindMedia(ta){
+  lastTa=ta;
   const st={images:[]};const fi=$("#fi"),pc=$("#pc"),mic=$("#mic");
   const upd=()=>{pc.textContent=st.images.length?`Фото: ${st.images.length} (~${Math.round(st.images.reduce((a,b)=>a+b.size,0)/1024)} КБ)`:""};
   $("#ph").onclick=()=>fi.click();
@@ -290,7 +304,7 @@ function bindMedia(ta){
     mic.onclick=()=>{
       if(rec){rec.stop();return}
       rec=new SR();rec.lang="ru-RU";rec.continuous=true;rec.interimResults=false;
-      rec.onresult=e=>{for(let i=e.resultIndex;i<e.results.length;i++)if(e.results[i].isFinal){const v=e.results[i][0].transcript.trim();ta.value+=(ta.value&&!/\s$/.test(ta.value)?" ":"")+v}};
+      rec.onresult=e=>{const tgt=lastTa||ta;for(let i=e.resultIndex;i<e.results.length;i++)if(e.results[i].isFinal){const v=e.results[i][0].transcript.trim();tgt.value+=(tgt.value&&!/\s$/.test(tgt.value)?" ":"")+v}};
       rec.onerror=e=>{$("#msg").className="msg err";$("#msg").textContent="Голос: "+e.error+" (можно диктовать микрофоном клавиатуры)"};
       rec.onend=()=>{mic.classList.remove("rec");mic.textContent="🎤 Голос";rec=null};
       mic.classList.add("rec");mic.textContent="⏹ Стоп";
@@ -321,19 +335,37 @@ async function doNew(op){
   const text=`---\ntitle: ${op.title}\nstatus: inbox\npriority: ${op.priority||"medium"}\ncreated: ${today()}\neffort: ${op.effort||""}\ndue:\ntags: [${tags}]\nproject:\ndepends: []\ndigested:\n---\n\n# ${op.title}\n\n## Выжимка\n_пока нет: агент напишет по \`memory/${slug}.md\`_\n\n## Суть\n${(op.body||"").trim()}${img.length?"\n\n"+img.join("\n"):""}\n\n## Зачем\n## Варианты\n## Следующий шаг\n## Журнал\n- ${today()}: добавлено через веб-интерфейс\n`;
   await putFile("ideas/"+slug+".md",text,"idea: add "+slug+" (web)");
 }
+const MEMHEAD=slug=>`# Память: ${slug}\n\nСырые факты, результаты, решения, вопросы и ссылки по идее. Только дописывать в конец, ничего не удалять.\nФормат строки: \`- ГГГГ-ММ-ДД [тип] текст (источник)\`, типы: fact, result, decision, question, link.\nСекреты (пароли, ключи, токены) не записывать. Выжимку агент пишет в раздел \`## Выжимка\` файла идеи.\n\n`;
+function setFm(t,k,v){
+  const m=t.match(/^---\n([\s\S]*?)\n---\n/);if(!m)return t;
+  const re=new RegExp("^"+k+":[^\\n]*$","m");
+  const fm=re.test(m[1])?m[1].replace(re,()=>k+": "+v):m[1]+"\n"+k+": "+v;
+  return "---\n"+fm+"\n---\n"+t.slice(m[0].length);
+}
+async function addMem(slug,mem){
+  const p="memory/"+slug+".md";let text,sha;
+  try{const f=await getFile(p);text=f.text;sha=f.sha}catch(e){if(e.status!==404)throw e;text=MEMHEAD(slug)}
+  const line=`- ${today()} [${mem.type}] ${mem.text.replace(/\s*\n+\s*/g," ").trim()} (веб)`;
+  await putFile(p,text.replace(/\s*$/,"\n")+line+"\n",`idea: memory ${slug} (web)`,sha);
+}
 async function doEdit(op){
-  const p="ideas/"+op.slug+".md";const f=await getFile(p);let t=f.text;
+  const p="ideas/"+op.slug+".md";
+  if(op.mem&&op.mem.text)await addMem(op.slug,op.mem);
+  const props=op.status||op.effort!==undefined||op.priority||op.tags!==undefined||op.note||(op.images&&op.images.length);
+  if(!props)return;
+  const f=await getFile(p);let t=f.text;
   const img=await uploadImages(op.slug,op);
-  if(op.status){
-    if(/^status:[^\n]*$/m.test(t))t=t.replace(/^status:[^\n]*$/m,"status: "+op.status);
-    else t=t.replace(/^---\n/,"---\nstatus: "+op.status+"\n");
-  }
+  if(op.status)t=setFm(t,"status",op.status);
+  if(op.effort!==undefined)t=setFm(t,"effort",op.effort);
+  if(op.priority)t=setFm(t,"priority",op.priority);
+  if(op.tags!==undefined)t=setFm(t,"tags","["+op.tags.split(",").map(x=>x.trim()).filter(Boolean).join(", ")+"]");
   if(op.note||img.length){
     const line="- "+today()+": "+(op.note||"фото").replace(/\n+/g," ")+(img.length?" "+img.join(" "):"");
     const heads=[...t.matchAll(/^## .*$/gm)];const lastH=heads.length?heads[heads.length-1][0]:"";
     t=t.replace(/\s*$/,"\n")+(lastH.startsWith("## Журнал")?"":"\n## Журнал\n")+line+"\n";
   }
-  await putFile(p,t,"idea: "+op.slug+(op.status?" → "+op.status:"")+((op.note||img.length)?" + заметка":"")+" (web)",f.sha);
+  const what=[op.status&&"→ "+op.status,op.effort!==undefined&&"усилия",op.priority&&"приоритет",op.tags!==undefined&&"теги",(op.note||img.length)&&"заметка"].filter(Boolean).join(", ");
+  await putFile(p,t,"idea: "+op.slug+" "+what+" (web)",f.sha);
 }
 const run=op=>op.type==="new"?doNew(op):doEdit(op);
 async function submit(op,setMsg){
@@ -372,8 +404,13 @@ function openIdea(slug){
   <div class="meta">${i.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}${i.project?`<span>проект: ${esc(i.project)}</span>`:""}${i.effort?`<span>⏱ ${esc(i.effort)}</span>`:""}<span>память ${i.mem}</span></div>
   <label>Статус</label>
   <select id="st">${STATUSES.map(s=>`<option value="${s}" ${s===i.status?"selected":""}>${RU[s]}</option>`).join("")}</select>
+  <div class="row"><div><label>Усилия</label><select id="pe">${["","вечер","выходные","неделя",...(i.effort&&!["вечер","выходные","неделя"].includes(i.effort)?[i.effort]:[])].map(v=>`<option value="${esc(v)}" ${v===(i.effort||"")?"selected":""}>${v||"не знаю"}</option>`).join("")}</select></div>
+  <div><label>Приоритет</label><select id="pp">${[...new Set(["high","medium","low",i.priority])].map(v=>`<option ${v===i.priority?"selected":""}>${esc(v)}</option>`).join("")}</select></div></div>
+  <label>Теги (через запятую)</label><input id="pt" style="width:100%" value="${esc(i.tags.join(", "))}">
   ${i.digest?`<label>Выжимка${i.stale?' <span class="warn">⚠ устарела</span>':""}</label><div class="md">${md(i.digest)}</div>`:""}
   <label>Файл идеи</label><div class="md">${md(i.body.replace(/^## Выжимка[ \t]*\n[\s\S]*?(?=^## |$(?![\s\S]))/m,"").replace(/^\s*# [^\n]*\n/,"").trim()||"(пусто)")}</div>
+  <label>Запись в память идеи (устойчивое: факт, результат, решение, вопрос, ссылка)</label>
+  <div class="row"><select id="mt" style="flex:0 0 130px;min-width:110px">${["fact","result","decision","question","link"].map(v=>`<option>${v}</option>`).join("")}</select><textarea id="mem" style="min-height:70px;flex:3 1 220px" placeholder="Одна запись"></textarea></div>
   <label>Дописать заметку (в журнал)</label><textarea id="note" placeholder="Что нового по этой идее"></textarea>
   ${mediaHtml()}
   <div class="msg" id="msg"></div>
@@ -383,9 +420,11 @@ function openIdea(slug){
   loadImgs(dlg);
   $("#ok").onclick=async()=>{
     const ns=$("#st").value,note=$("#note").value.trim();
-    if(ns===i.status&&!note&&!media.images.length){close();return}
+    const ef=$("#pe").value,pr=$("#pp").value,tg=$("#pt").value.trim().replace(/\s*,\s*/g,", "),memT=$("#mem").value.trim();
+    const efCh=ef!==(i.effort||""),prCh=pr!==i.priority,tgCh=tg!==i.tags.join(", ");
+    if(ns===i.status&&!note&&!media.images.length&&!efCh&&!prCh&&!tgCh&&!memT){close();return}
     $("#ok").disabled=true;$("#msg").className="msg";$("#msg").textContent="Сохраняю…";
-    const op={id:Date.now(),type:"edit",slug,status:ns!==i.status?ns:"",note,images:media.images};
+    const op={id:Date.now(),type:"edit",slug,status:ns!==i.status?ns:"",note,images:media.images,effort:efCh?ef:undefined,priority:prCh?pr:undefined,tags:tgCh?tg:undefined,mem:memT?{type:$("#mt").value,text:memT}:undefined};
     try{
       const r=await submit(op,m=>{$("#msg").textContent=m});
       if(r==="queued"){setTimeout(()=>{close();qbar()},900)}else{close();await load()}
@@ -426,13 +465,15 @@ function setup(msg){
   <label>Токен (fine-grained, только этот репозиторий, Contents: Read and write)</label>
   <input id="k" type="password" style="width:100%" value="" placeholder="${cfg.token?"сохранён, введи заново чтобы заменить":"github_pat_…"}" autocomplete="off">
   <div class="msg ${msg?"err":""}" id="msg">${esc(msg||"")}</div>
+  <label>Отступ окон снизу, px (если нижняя часть окна обрезается)</label><input id="pad" type="number" min="0" max="600" style="width:100%" value="${cfg.pad||0}">
+  <div class="dbg">окно ${innerWidth}×${innerHeight}, видимая область ${Math.round(window.visualViewport?visualViewport.width:0)}×${Math.round(window.visualViewport?visualViewport.height:0)}, экран ${screen.width}×${screen.height}, ×${devicePixelRatio}</div>
   <div class="actions">${cfg.token?'<button id="out">Выйти</button>':""}<button id="x">Закрыть</button><button class="primary" id="ok">Подключить</button></div>`);
   $("#x").onclick=close;
   const out=$("#out");if(out)out.onclick=()=>{cfg={};saveCfg();close();ideas=[];$("#add").hidden=true;$("#app").innerHTML="";setup()};
   $("#ok").onclick=async()=>{
-    const repo=$("#r").value.trim(),tok=$("#k").value.trim()||cfg.token;
+    const repo=$("#r").value.trim(),tok=$("#k").value.trim()||cfg.token;const pad=Math.max(0,Math.min(600,+$("#pad").value||0));
     if(!/^[\w.-]+\/[\w.-]+$/.test(repo)||!tok){$("#msg").className="msg err";$("#msg").textContent="Нужны репозиторий и токен";return}
-    cfg={repo,token:tok};$("#msg").className="msg";$("#msg").textContent="Проверяю…";
+    cfg={repo,token:tok,pad};$("#msg").className="msg";$("#msg").textContent="Проверяю…";
     try{await gh("");saveCfg();close();load()}catch(e){cfg={};$("#msg").className="msg err";$("#msg").textContent="Не подключилось: "+e.message+(e.status===404?" (репозиторий не найден или токену нет доступа)":"")}
   };
 }
