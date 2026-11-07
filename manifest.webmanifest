@@ -1,1 +1,1 @@
-{"name":"Идеи","short_name":"Идеи","start_url":".","display":"standalone","background_color":"#12151a","theme_color":"#1f2937","icons":[{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}]}
+{"name":"Идеи","short_name":"Идеи","start_url":".","scope":".","display":"standalone","background_color":"#12151a","theme_color":"#1f2937","icons":[{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}],"share_target":{"action":"./","method":"GET","params":{"title":"title","text":"text","url":"url"}}}
