@@ -52,6 +52,21 @@ pre{white-space:pre-wrap;word-wrap:break-word;font:inherit;margin:0;background:v
 .thumbs img{max-width:160px;max-height:160px;border-radius:8px;border:1px solid var(--line);cursor:zoom-in}
 .thumbs img.big{max-width:100%;max-height:none;cursor:zoom-out}
 .qbar{background:color-mix(in srgb,var(--warn) 18%,var(--card));border:1px solid var(--warn);border-radius:10px;padding:8px 12px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.md{line-height:1.5;overflow-wrap:anywhere}
+.md>:first-child{margin-top:0}.md>:last-child{margin-bottom:0}
+.md h1,.md h2,.md h3,.md h4,.md h5,.md h6{margin:14px 0 6px;line-height:1.25}
+.md h1{font-size:1.35em}.md h2{font-size:1.2em;border-bottom:1px solid var(--line);padding-bottom:3px}.md h3{font-size:1.08em}.md h4,.md h5,.md h6{font-size:1em;color:var(--mut)}
+.md p{margin:6px 0}.md ul,.md ol{margin:6px 0;padding-left:22px}.md li{margin:2px 0}
+.md code{background:color-mix(in srgb,var(--fg) 10%,transparent);border-radius:4px;padding:1px 5px;font:0.92em ui-monospace,Menlo,Consolas,monospace}
+.md pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;white-space:pre}
+.md pre code{background:none;padding:0}
+.md blockquote{margin:8px 0;padding:2px 12px;border-left:3px solid var(--line);color:var(--mut)}
+.md hr{border:0;border-top:1px solid var(--line);margin:12px 0}
+.md table{border-collapse:collapse;margin:8px 0;display:block;overflow:auto}.md th,.md td{border:1px solid var(--line);padding:4px 8px}.md th{background:var(--card)}
+.md a{color:var(--acc)}.md a.wl{cursor:pointer;text-decoration:underline dotted}
+.md img{max-width:100%;border-radius:8px;border:1px solid var(--line);margin:4px 0;cursor:zoom-in}
+.md img.big{cursor:zoom-out}
+.md .box{display:inline-block;width:1.1em}
 </style>
 </head>
 <body>
@@ -187,11 +202,64 @@ function render(){
 }
 $("#app").addEventListener("click",e=>{const el=e.target.closest("[data-open]");if(el)openIdea(el.dataset.open)});
 
+
+/* ---------- markdown (безопасный: сначала экранирование, потом разметка) ---------- */
+function mdInline(raw){
+  const codes=[];
+  let s=esc(raw).replace(/`([^`]+)`/g,(m,c)=>{codes.push(c);return "\u0000"+(codes.length-1)+"\u0000"});
+  s=s.replace(/!\[([^\]]*)\]\((images\/[^)\s]+)\)/g,'<img data-src="$2" alt="$1">');
+  s=s.replace(/\[\[([\w.-]+)\]\]/g,'<a class="wl" data-idea="$1">$1</a>');
+  s=s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  s=s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g,'$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
+  s=s.replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/__(.+?)__/g,"<strong>$1</strong>");
+  s=s.replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?![*\w])/g,"$1<em>$2</em>").replace(/~~(.+?)~~/g,"<s>$1</s>");
+  return s.replace(/\u0000(\d+)\u0000/g,(m,n)=>"<code>"+esc(codes[+n])+"</code>");
+}
+function md(src){
+  const L=String(src||"").replace(/\r/g,"").split("\n");const out=[];let i=0,para=[];
+  const st=[];
+  const flushP=()=>{if(para.length){out.push("<p>"+para.map(mdInline).join("<br>")+"</p>");para=[]}};
+  const closeTop=()=>{const x=st.pop();out.push((x.li?"</li>":"")+"</"+x.t+">")};
+  const closeAll=()=>{while(st.length)closeTop()};
+  const item=(ind,tp,txt)=>{
+    while(st.length&&st[st.length-1].ind>ind)closeTop();
+    let top=st[st.length-1];
+    if(top&&top.ind===ind&&top.t!==tp){closeTop();top=st[st.length-1]}
+    if(!top||top.ind<ind){out.push("<"+tp+">");st.push({t:tp,ind,li:false});top=st[st.length-1]}
+    else if(top.li)out.push("</li>");
+    txt=txt.replace(/^\[ \]\s+/,"☐ ").replace(/^\[[xX]\]\s+/,"☑ ");
+    out.push("<li>"+mdInline(txt));top.li=true;
+  };
+  const cells=l=>l.trim().replace(/^\|/,"").replace(/\|$/,"").split("|").map(c=>c.trim());
+  while(i<L.length){
+    const l=L[i];
+    if(/^\s*```/.test(l)){flushP();closeAll();const buf=[];i++;while(i<L.length&&!/^\s*```/.test(L[i]))buf.push(L[i++]);i++;out.push("<pre><code>"+esc(buf.join("\n"))+"</code></pre>");continue}
+    if(!l.trim()){flushP();closeAll();i++;continue}
+    let m;
+    if((m=l.match(/^(#{1,6})\s+(.*?)\s*#*$/))){flushP();closeAll();const n=m[1].length;out.push(`<h${n}>${mdInline(m[2])}</h${n}>`);i++;continue}
+    if(/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)){flushP();closeAll();out.push("<hr>");i++;continue}
+    if(/^\s*>/.test(l)){flushP();closeAll();const buf=[];while(i<L.length&&/^\s*>/.test(L[i]))buf.push(L[i++].replace(/^\s*>\s?/,""));out.push("<blockquote>"+md(buf.join("\n"))+"</blockquote>");continue}
+    if(l.includes("|")&&i+1<L.length&&/^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(L[i+1])){
+      flushP();closeAll();const head=cells(l);i+=2;const rows=[];
+      while(i<L.length&&L[i].includes("|")&&L[i].trim())rows.push(cells(L[i++]));
+      out.push("<table><thead><tr>"+head.map(c=>"<th>"+mdInline(c)+"</th>").join("")+"</tr></thead><tbody>"+rows.map(r=>"<tr>"+r.map(c=>"<td>"+mdInline(c)+"</td>").join("")+"</tr>").join("")+"</tbody></table>");continue}
+    if((m=l.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/))){flushP();item(m[1].replace(/\t/g,"  ").length,/\d/.test(m[2])?"ol":"ul",m[3]);i++;continue}
+    if(st.length&&/^\s+\S/.test(l)){out.push("<br>"+mdInline(l.trim()));i++;continue}   // продолжение пункта списка
+    closeAll();para.push(l.trim());i++;
+  }
+  flushP();closeAll();return out.join("");
+}
+async function loadImgs(root){
+  root.querySelectorAll("img[data-src]").forEach(async im=>{
+    try{const bl=await gh("/contents/"+encodeURI(im.dataset.src)+"?ref=main",{},"blob");im.src=URL.createObjectURL(bl);im.onclick=()=>im.classList.toggle("big")}catch(e){im.alt=(im.alt||"фото")+" (не загрузилось)"}
+  });
+}
+
 /* ---------- диалоги ---------- */
 const dlg=$("#dlg");
 function show(html){dlg.innerHTML=html;if(!dlg.open)dlg.showModal()}
 const close=()=>dlg.open&&dlg.close();
-dlg.addEventListener("click",e=>{if(e.target===dlg)close()});
+dlg.addEventListener("click",e=>{if(e.target===dlg)close();const a=e.target.closest("[data-idea]");if(a&&ideas.some(x=>x.slug===a.dataset.idea))openIdea(a.dataset.idea)});
 
 /* ---------- медиа: фото и голос ---------- */
 async function shrink(file){
@@ -304,19 +372,15 @@ function openIdea(slug){
   <div class="meta">${i.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}${i.project?`<span>проект: ${esc(i.project)}</span>`:""}${i.effort?`<span>⏱ ${esc(i.effort)}</span>`:""}<span>память ${i.mem}</span></div>
   <label>Статус</label>
   <select id="st">${STATUSES.map(s=>`<option value="${s}" ${s===i.status?"selected":""}>${RU[s]}</option>`).join("")}</select>
-  ${i.digest?`<label>Выжимка${i.stale?' <span class="warn">⚠ устарела</span>':""}</label><pre>${esc(i.digest)}</pre>`:""}
-  ${i.images.length?`<label>Фото</label><div class="thumbs" id="th"></div>`:""}
-  <label>Файл идеи</label><pre>${esc(i.body.replace(/^## Выжимка[ \t]*\n[\s\S]*?(?=^## |$(?![\s\S]))/m,"").trim()||"(пусто)")}</pre>
+  ${i.digest?`<label>Выжимка${i.stale?' <span class="warn">⚠ устарела</span>':""}</label><div class="md">${md(i.digest)}</div>`:""}
+  <label>Файл идеи</label><div class="md">${md(i.body.replace(/^## Выжимка[ \t]*\n[\s\S]*?(?=^## |$(?![\s\S]))/m,"").replace(/^\s*# [^\n]*\n/,"").trim()||"(пусто)")}</div>
   <label>Дописать заметку (в журнал)</label><textarea id="note" placeholder="Что нового по этой идее"></textarea>
   ${mediaHtml()}
   <div class="msg" id="msg"></div>
   <div class="actions"><button id="x">Закрыть</button><button class="primary" id="ok">Сохранить</button></div>`);
   $("#x").onclick=close;
   const media=bindMedia($("#note"));
-  const th=$("#th");
-  if(th)i.images.forEach(async path=>{
-    try{const bl=await gh("/contents/"+encodeURI(path)+"?ref=main",{},"blob");const im=new Image();im.src=URL.createObjectURL(bl);im.onclick=()=>im.classList.toggle("big");th.appendChild(im)}catch(e){}
-  });
+  loadImgs(dlg);
   $("#ok").onclick=async()=>{
     const ns=$("#st").value,note=$("#note").value.trim();
     if(ns===i.status&&!note&&!media.images.length){close();return}
